@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(xmc4700_cpp_coroutines CXX ASM)
+project(xmc4700_cpp_coroutines C CXX ASM)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -28,6 +28,20 @@ set(COMMON_SOURCES
     src/startup.cpp
 )
 
+# Gemeinsame Optionen für Cortex-M4F (Compiler und Linker)
+set(MCU_FLAGS -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard)
+
+# LVGL aus einer lokalen Kopie (Git-Checkout), Konfiguration in include/lv_conf.h
+set(LVGL_DIR "$ENV{HOME}/lvgl" CACHE PATH "Pfad zur LVGL-Quellkopie")
+if(NOT EXISTS "${LVGL_DIR}/lvgl.h")
+    message(FATAL_ERROR "LVGL nicht gefunden in ${LVGL_DIR} (cmake -DLVGL_DIR=...)")
+endif()
+file(GLOB_RECURSE LVGL_SOURCES CONFIGURE_DEPENDS "${LVGL_DIR}/src/*.c")
+add_library(lvgl STATIC ${LVGL_SOURCES})
+target_include_directories(lvgl SYSTEM PUBLIC "${LVGL_DIR}")
+target_compile_definitions(lvgl PUBLIC LV_CONF_PATH="${CMAKE_SOURCE_DIR}/include/lv_conf.h")
+target_compile_options(lvgl PRIVATE ${MCU_FLAGS} -ffunction-sections -fdata-sections -w)
+
 # Firmware-Ziel mit Compiler-/Linker-Optionen für den XMC4700 anlegen
 function(xmc_firmware name)
     add_executable(${name} ${ARGN} ${COMMON_SOURCES})
@@ -35,10 +49,7 @@ function(xmc_firmware name)
     target_include_directories(${name} PRIVATE include)
     target_compile_definitions(${name} PRIVATE CPU_HZ=${CPU_HZ})
     target_compile_options(${name} PRIVATE
-        -mcpu=cortex-m4
-        -mthumb
-        -mfpu=fpv4-sp-d16
-        -mfloat-abi=hard
+        ${MCU_FLAGS}
         -ffunction-sections
         -fdata-sections
         -fno-exceptions
@@ -48,10 +59,7 @@ function(xmc_firmware name)
         -Wpedantic
     )
     target_link_options(${name} PRIVATE
-        -mcpu=cortex-m4
-        -mthumb
-        -mfpu=fpv4-sp-d16
-        -mfloat-abi=hard
+        ${MCU_FLAGS}
         -T${CMAKE_SOURCE_DIR}/linker/xmc4700.ld
         --specs=nano.specs
         --specs=nosys.specs
@@ -60,8 +68,9 @@ function(xmc_firmware name)
     )
 endfunction()
 
-# Hauptprogramm: Coroutine-Executor, LED, BME280, UART
-xmc_firmware(xmc4700_coroutines src/main.cpp)
+# Hauptprogramm: Coroutine-Executor, LED, BME280, UART, LVGL-Oberfläche auf ILI9341 + Touch
+xmc_firmware(xmc4700_coroutines src/main.cpp src/lvgl_port.cpp src/ui.cpp)
+target_link_libraries(xmc4700_coroutines PRIVATE lvgl)
 
 # SPI-Selbsttest ohne Verdrahtung (interne Rückschleife), Ausgabe über UART
 xmc_firmware(spi_loopback src/tests/spi_loopback.cpp)

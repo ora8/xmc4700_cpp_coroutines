@@ -58,6 +58,10 @@ public:
   void draw_vline(std::int16_t x, std::int16_t y, std::int16_t h, std::uint16_t color) noexcept {
     fill_rect(x, y, 1, h, color);
   }
+  /// Rechteckigen Bereich (x0..x1, y0..y1 inklusive) mit fertigen Pixeldaten füllen:
+  /// RGB565, je Pixel High-Byte zuerst, zeilenweise. Für Grafikbibliotheken wie LVGL.
+  void write_pixels(std::int16_t x0, std::int16_t y0, std::int16_t x1, std::int16_t y1,
+                    const std::uint8_t *data, std::size_t bytes) noexcept;
   /// Rechteck-Umriss
   void draw_rect(std::int16_t x, std::int16_t y, std::int16_t w, std::int16_t h,
                  std::uint16_t color) noexcept;

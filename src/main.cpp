@@ -4,8 +4,10 @@
 #include "gpio.hpp"
 #include "i2c.hpp"
 #include "ili9341.hpp"
+#include "lvgl_port.hpp"
 #include "spi_hw.hpp"
 #include "uart_hw.hpp"
+#include "ui.hpp"
 #include "xpt2046.hpp"
 #include "xmc_regs.hpp"
 #include <cstdint>
@@ -38,14 +40,19 @@ volatile bool bme_ok = false;
 volatile float bme_temperature_c = 0;
 volatile float bme_humidity_percent = 0;
 volatile float bme_pressure_hpa = 0;
+
+// Von der Oberfläche (ui.cpp) eingestellt
+volatile bool led_blinking = true;
+volatile std::uint32_t led_half_period_ms = 500;
 } // namespace
 
+// Blinkt im eingestellten Intervall; Schalter und Schieberegler der Oberfläche steuern es
 Task blink_task() {
   for (;;) {
-    led.write(!board::led_active_low);
-    co_await Executor::sleep_for(500);
+    if (led_blinking) led.write(!board::led_active_low);
+    co_await Executor::sleep_for(led_half_period_ms);
     led.write(board::led_active_low);
-    co_await Executor::sleep_for(500);
+    co_await Executor::sleep_for(led_half_period_ms);
   }
 }
 
@@ -87,135 +94,19 @@ Task bme280_task() {
   }
 }
 
-// Zahl mit festen Nachkommastellen in einen Puffer schreiben (ohne printf)
-char *format_fixed(char *out, float value, unsigned decimals) noexcept {
-  if (value < 0) {
-    *out++ = '-';
-    value = -value;
+// LVGL regelmäßig bedienen: Timer, Touch-Abfrage und Neuzeichnen geänderter Bereiche
+Task lvgl_task() {
+  for (;;) {
+    co_await Executor::sleep_for(lvgl_port::handler());
   }
-  std::uint32_t scale = 1;
-  for (unsigned i = 0; i < decimals; ++i) scale *= 10;
-  const auto rounded = static_cast<std::uint32_t>(value * float(scale) + 0.5f);
-  char digits[12];
-  unsigned n = 0;
-  std::uint32_t whole = rounded / scale;
-  do {
-    digits[n++] = char('0' + whole % 10);
-    whole /= 10;
-  } while (whole);
-  while (n) *out++ = digits[--n];
-  if (decimals) {
-    *out++ = '.';
-    std::uint32_t frac = rounded % scale;
-    for (unsigned i = 0; i < decimals; ++i) {
-      scale /= 10;
-      *out++ = char('0' + frac / scale);
-      frac %= scale;
-    }
-  }
-  *out = '\0';
-  return out;
 }
 
-// Zeigt die BME280-Werte und die Laufzeit auf dem Display, jede Sekunde neu
-Task display_task() {
-  char line[32];
+// Oberfläche jede Sekunde mit Messwerten und Laufzeit aktualisieren
+Task ui_task() {
   for (;;) {
-    const std::int16_t x = 10;
-    if (bme_ok) {
-      char *p = format_fixed(line, bme_temperature_c, 2);
-      *p++ = ' ';
-      *p++ = 'C';
-      *p++ = ' ';
-      *p = '\0';
-      tft.draw_text(x, 70, "Temperatur", Ili9341::GRAY, Ili9341::BLACK, 2);
-      tft.draw_text(x, 92, line, Ili9341::WHITE, Ili9341::BLACK, 3);
-      p = format_fixed(line, bme_humidity_percent, 1);
-      *p++ = ' ';
-      *p++ = '%';
-      *p++ = ' ';
-      *p = '\0';
-      tft.draw_text(x, 130, "Feuchte", Ili9341::GRAY, Ili9341::BLACK, 2);
-      tft.draw_text(x + 150, 130, line, Ili9341::CYAN, Ili9341::BLACK, 2);
-      p = format_fixed(line, bme_pressure_hpa, 1);
-      *p++ = ' ';
-      *p++ = 'h';
-      *p++ = 'P';
-      *p++ = 'a';
-      *p++ = ' ';
-      *p = '\0';
-      tft.draw_text(x, 156, "Druck", Ili9341::GRAY, Ili9341::BLACK, 2);
-      tft.draw_text(x + 150, 156, line, Ili9341::YELLOW, Ili9341::BLACK, 2);
-    } else {
-      tft.draw_text(x, 92, "BME280 fehlt  ", Ili9341::RED, Ili9341::BLACK, 2);
-    }
-    const auto s = millis() / 1000;
-    char *p = format_fixed(line, float(s), 0);
-    *p++ = ' ';
-    *p++ = 's';
-    *p = '\0';
-    tft.draw_text(x, 200, "Laufzeit ", Ili9341::GRAY, Ili9341::BLACK, 2);
-    tft.draw_text(x + 108, 200, line, Ili9341::WHITE, Ili9341::BLACK, 2);
+    ui::set_sensor(bme_ok, bme_temperature_c, bme_humidity_percent, bme_pressure_hpa);
+    ui::set_uptime(millis() / 1000);
     co_await Executor::sleep_for(1000);
-  }
-}
-
-// Startbild: Titel und Farbbalken
-void display_start_screen() noexcept {
-  const auto t0 = millis();
-  tft.fill_screen(Ili9341::BLACK);
-  const auto t_clear = millis() - t0;
-  tft.draw_text(10, 10, "XMC4700 + C++20", Ili9341::WHITE, Ili9341::BLACK, 3);
-  const std::uint16_t colors[] = {Ili9341::RED,  Ili9341::GREEN, Ili9341::BLUE,
-                                  Ili9341::YELLOW, Ili9341::CYAN, Ili9341::MAGENTA};
-  const std::int16_t w = tft.width() / 6;
-  for (unsigned i = 0; i < 6; ++i) {
-    tft.fill_rect(std::int16_t(i * w), 44, w, 16, colors[i]);
-  }
-  tft.draw_rect(0, 0, tft.width(), tft.height(), Ili9341::GRAY);
-  uart.print("Display: SPI ");
-  uart.print_int(static_cast<std::int32_t>(spi.frequency() / 1000));
-  uart.print(" kHz, Bildschirm loeschen ");
-  uart.print_int(static_cast<std::int32_t>(t_clear));
-  uart.print(" ms\n");
-}
-
-// Touch: alle 20 ms abfragen, Punkt malen, Koordinaten unten anzeigen.
-// Pro Berührung einmal die Rohwerte über UART (zum Kalibrieren, siehe README).
-Task touch_task() {
-  bool was_touched = false;
-  char line[40];
-  for (;;) {
-    Xpt2046::Raw raw;
-    if (touch.touched() && touch.read_raw(raw)) {
-      const auto p = touch.map(raw, TFT_ROTATION);
-      tft.fill_rect(std::int16_t(p.x - 2), std::int16_t(p.y - 2), 5, 5, Ili9341::WHITE);
-      char *q = line;
-      for (const char *t = "Touch x="; *t;) *q++ = *t++;
-      q = format_fixed(q, float(p.x), 0);
-      for (const char *t = " y="; *t;) *q++ = *t++;
-      q = format_fixed(q, float(p.y), 0);
-      for (const char *t = "    "; *t;) *q++ = *t++;
-      *q = '\0';
-      tft.draw_text(10, 226, line, Ili9341::GREEN, Ili9341::BLACK, 1);
-      if (!was_touched) {
-        uart.print("Touch roh x=");
-        uart.print_int(raw.x);
-        uart.print(" y=");
-        uart.print_int(raw.y);
-        uart.print(" z=");
-        uart.print_int(raw.z);
-        uart.print(" -> Bildschirm ");
-        uart.print_int(p.x);
-        uart.print(",");
-        uart.print_int(p.y);
-        uart.print("\n");
-      }
-      was_touched = true;
-    } else {
-      was_touched = false;
-    }
-    co_await Executor::sleep_for(20);
   }
 }
 
@@ -272,14 +163,32 @@ int main() {
   spi_cfg.frequency = 20'000'000;
   spi.init(CPU_HZ, spi_cfg);
   tft.init(TFT_ROTATION);
-  display_start_screen();
   touch.init();
+
+  // LVGL und Oberfläche; erstes Bild sofort zeichnen und Dauer melden
+  lvgl_port::init(tft, &touch, TFT_ROTATION, &uart);
+  ui::Callbacks ui_cb;
+  ui_cb.led_enable = [](bool on) { led_blinking = on; };
+  ui_cb.blink_period = [](std::uint32_t ms) { led_half_period_ms = ms; };
+  ui::create(ui_cb, led_half_period_ms);
+  const auto frame_ms = lvgl_port::refresh_now();
+  std::uint32_t mem_free = 0, mem_max = 0;
+  lvgl_port::memory(mem_free, mem_max);
+  uart.print("LVGL: SPI ");
+  uart.print_int(static_cast<std::int32_t>(spi.frequency() / 1000));
+  uart.print(" kHz, erstes Bild ");
+  uart.print_int(static_cast<std::int32_t>(frame_ms));
+  uart.print(" ms, Speicher frei ");
+  uart.print_int(static_cast<std::int32_t>(mem_free));
+  uart.print(" B, max. belegt ");
+  uart.print_int(static_cast<std::int32_t>(mem_max));
+  uart.print(" B\n");
 
   spawn(blink_task(), "blink");
   spawn(bme280_task(), "bme280");
   spawn(heartbeat_task(), "heartbeat");
-  spawn(display_task(), "display");
-  spawn(touch_task(), "touch");
+  spawn(lvgl_task(), "lvgl");
+  spawn(ui_task(), "ui");
 
   executor.run();
 }

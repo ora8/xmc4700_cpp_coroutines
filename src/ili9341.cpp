@@ -130,6 +130,15 @@ void Ili9341::fill_rect(std::int16_t x, std::int16_t y, std::int16_t w, std::int
   end_pixels();
 }
 
+void Ili9341::write_pixels(std::int16_t x0, std::int16_t y0, std::int16_t x1,
+                           std::int16_t y1, const std::uint8_t *data,
+                           std::size_t bytes) noexcept {
+  if (x0 > x1 || y0 > y1 || x0 < 0 || y0 < 0 || x1 >= width_ || y1 >= height_) return;
+  begin_pixels(x0, y0, x1, y1);
+  spi_.write(data, bytes);
+  end_pixels();
+}
+
 void Ili9341::draw_rect(std::int16_t x, std::int16_t y, std::int16_t w, std::int16_t h,
                         std::uint16_t color) noexcept {
   draw_hline(x, y, w, color);

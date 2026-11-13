@@ -1,4 +1,4 @@
-# SPI, UART + BME280 Serial Monitor
+# SPI, display, touch, LVGL, UART + BME280 Serial Monitor
 
 ## SPI (`include/spi_hw.hpp`, `src/spi_hw.cpp`)
 
@@ -45,8 +45,9 @@ tft.draw_text(x, y, "Text", fg, bg, scale);   // font 6x10, scale 1..4, opaque
   appear swapped on your module, call `tft.set_bgr(false)`.
 - Font: `include/font_6x10.hpp`, generated from the X11 font "6x10" (public domain) via the
   embedded-graphics bitmap.
-- `main.cpp` shows a start screen and, every second, the BME280 values and the uptime
-  (`display_task`). Without a display connected it runs harmlessly into the void.
+- `main.cpp` now draws through LVGL (see below); the driver's own drawing functions remain
+  available for programs without LVGL. Without a display connected it runs harmlessly
+  into the void.
 - Tested: on the board the SPI traffic runs (full screen clear 61 ms at 20 MHz = gap-free).
   The drawing logic was verified on the PC against a simulated display. **Not yet tested
   with a real panel.**
@@ -78,15 +79,37 @@ if (touch.touched() && touch.read(p, TFT_ROTATION)) { /* p.x, p.y in screen coor
   `SpiHw::set_frequency()` and back to the display clock afterwards.
 - Filtering: first sample discarded, 5 samples sorted, the middle three averaged; pressure
   is checked before and after the X/Y measurement (threshold `set_threshold()`, default 300).
-- **Calibration:** `touch_task` in `main.cpp` prints the raw values on every touch over the
-  UART. Touch the four corners, then set `Calibration{x_min, x_max, y_min, y_max, swap_xy}`
+- **Calibration:** the LVGL input driver (`src/lvgl_port.cpp`) prints the raw values once
+  per touch over the UART. Touch the four corners, then set `Calibration{x_min, x_max, y_min, y_max, swap_xy}`
   for portrait orientation (rotation 0) with `touch.set_calibration(...)`. `x_min > x_max`
   mirrors an axis; `swap_xy` swaps the raw axes. The driver converts to the display rotation.
-- `main.cpp` (`touch_task`, every 20 ms) draws a white dot at the touch point and shows
-  the coordinates at the bottom of the screen.
+- In `main.cpp` LVGL polls the touch controller (every 33 ms) as its pointer input.
 - Tested: `set_frequency` 20 MHz -> 2 MHz -> 20 MHz in the loopback test (`spi_loopback`);
   firmware runs on the board without touch hardware (no false touches). Bit extraction and
   mapping for all 4 rotations verified on the PC. **Not yet tested with a real panel.**
+
+## LVGL (`include/lv_conf.h`, `src/lvgl_port.cpp`, `src/ui.cpp`)
+
+LVGL is compiled from a local copy (default `~/lvgl`, currently 9.6.0-dev) as a static
+library; another location: `cmake -DLVGL_DIR=/path/to/lvgl ...`. The configuration is
+`include/lv_conf.h` (copied from `lv_conf_template.h`, changes: 48 KB memory pool, log level
+WARN over UART, fonts Montserrat 14/20/28).
+
+- **Port** (`lvgl_port.cpp`): tick = `millis()`, partial draw buffer 320 x 40 px (25.6 KB),
+  flush swaps RGB565 bytes and sends them with `Ili9341::write_pixels()`, XPT2046 as
+  pointer input, default group. No RTOS: `lvgl_task` calls `lvgl_port::handler()` every
+  1..10 ms. All LVGL calls must come from executor tasks (same execution context).
+- **Demo UI** (`ui.cpp`, hardware-independent): header with uptime, card with temperature,
+  humidity (bar) and pressure, switch "LED blinkt" and a slider for the blink interval
+  (100..1000 ms). `ui_task` updates the values once per second.
+- Built-in fonts contain ASCII and the degree sign only - no umlauts (generate your own font
+  with the LVGL font converter if needed).
+- Size: about 366 KB flash and 78 KB RAM in total (LVGL pool 48 KB + draw buffer 25.6 KB).
+- Tested on the board (without panel): all tasks start, no LVGL warnings, first full frame
+  225 ms (about 60 ms of it SPI), 36 KB of the pool still free. Tested on the PC with the
+  real `lvgl_port.cpp`/`ui.cpp`/`xpt2046.cpp` and simulated hardware: rendering correct,
+  tapping the switch turns blinking off, tapping the slider sets the interval.
+  **Not yet tested with a real panel.**
 
 ## UART + BME280
 
