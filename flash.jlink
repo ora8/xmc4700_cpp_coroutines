@@ -1,0 +1,10 @@
+device XMC4700-F144x2048
+si SWD
+speed 4000
+connect
+r
+h
+loadfile build/xmc4700_coroutines.elf
+r
+g
+exit

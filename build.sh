@@ -1,0 +1,5 @@
+rm -rf build
+
+cmake -S . -B build -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake
+cmake --build build
