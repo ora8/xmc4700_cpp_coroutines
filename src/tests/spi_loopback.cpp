@@ -84,6 +84,27 @@ int main() {
       uart.print(" KiB/s\n");
     }
   }
+  // Takt zur Laufzeit umschalten (Display 20 MHz <-> Touch 2 MHz)
+  {
+    SpiHw::Config cfg;
+    cfg.frequency = 20'000'000;
+    cfg.loopback = true;
+    spi.init(CPU_HZ, cfg);
+    for (std::uint32_t f : {2'000'000u, 20'000'000u, 2'000'000u}) {
+      const bool set_ok = spi.set_frequency(f);
+      for (auto &b : rx) b = 0;
+      spi.transfer(tx, rx, sizeof tx);
+      bool ok = set_ok;
+      for (unsigned i = 0; i < sizeof tx; ++i) ok = ok && rx[i] == tx[i];
+      if (!ok) ++errors;
+      uart.print("set_frequency ");
+      uart.print_int(static_cast<std::int32_t>(f / 1000));
+      uart.print(" kHz -> ");
+      uart.print_int(static_cast<std::int32_t>(spi.frequency() / 1000));
+      uart.print(" kHz: ");
+      uart.print(ok ? "OK\n" : "FEHLER\n");
+    }
+  }
   uart.print(errors ? "Ergebnis: FEHLER\n" : "Ergebnis: alles OK\n");
   for (;;) {
     __asm volatile("wfi");

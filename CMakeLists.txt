@@ -22,6 +22,7 @@ set(COMMON_SOURCES
     src/i2c.cpp
     src/spi_hw.cpp
     src/ili9341.cpp
+    src/xpt2046.cpp
     src/uart_hw.cpp
     src/coroutine_pool.cpp
     src/startup.cpp

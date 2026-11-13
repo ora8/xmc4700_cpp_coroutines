@@ -53,25 +53,47 @@ void wait_clear(std::uintptr_t addr, std::uint32_t mask) noexcept {
 }
 } // namespace
 
-bool SpiHw::init(std::uint32_t peripheral_hz, const Config &config) noexcept {
-  // Teiler: f = fPERIPH * STEP / 1024 / (PDIV + 1) / 2. Nur Werte <= Wunschfrequenz,
-  // damit das angeschlossene Gerät nicht übertaktet wird.
-  if (config.frequency == 0) return false;
+namespace {
+struct Divider {
+  std::uint32_t step = 0, pdiv = 0, actual = 0;
+};
+
+/// Teiler für f = fPERIPH * STEP / 1024 / (PDIV + 1) / 2. Nur Werte <= Wunschfrequenz,
+/// damit das angeschlossene Gerät nicht übertaktet wird. step == 0: nicht erreichbar.
+Divider calc_divider(std::uint32_t peripheral_hz, std::uint32_t frequency) noexcept {
+  Divider best;
+  if (frequency == 0) return best;
   const std::uint64_t f = peripheral_hz;
-  const std::uint64_t den = 1024ull * OVERSAMPLING * config.frequency;
-  std::uint32_t best_step = 0, best_pdiv = 0;
-  std::uint64_t best_actual = 0;
+  const std::uint64_t den = 1024ull * OVERSAMPLING * frequency;
   for (std::uint64_t step = 1; step <= 1023; ++step) {
     const std::uint64_t p = (f * step + den - 1) / den; // aufrunden
     if (p < 1 || p > 1024) continue;
     const std::uint64_t actual = f * step / (1024ull * OVERSAMPLING * p);
-    if (actual <= config.frequency && actual > best_actual) {
-      best_actual = actual;
-      best_step = std::uint32_t(step);
-      best_pdiv = std::uint32_t(p);
+    if (actual <= frequency && actual > best.actual) {
+      best = {std::uint32_t(step), std::uint32_t(p), std::uint32_t(actual)};
     }
   }
-  if (best_step == 0) return false;
+  return best;
+}
+} // namespace
+
+bool SpiHw::set_frequency(std::uint32_t frequency) noexcept {
+  const Divider div = calc_divider(peripheral_hz_, frequency);
+  if (div.step == 0) return false;
+  // Nur zwischen Übertragungen aufrufen; alle Funktionen kehren erst zurück, wenn der
+  // Bus frei ist. SCLKCFG (Modus) bleibt erhalten.
+  reg(U + FDR) = (2u << 14) | div.step;
+  reg(U + BRG) = (sclkcfg(mode_) << 30) | ((div.pdiv - 1u) << 16) | ((OVERSAMPLING - 1u) << 10);
+  frequency_ = div.actual;
+  return true;
+}
+
+bool SpiHw::init(std::uint32_t peripheral_hz, const Config &config) noexcept {
+  const Divider div = calc_divider(peripheral_hz, config.frequency);
+  if (div.step == 0) return false;
+  const std::uint32_t best_step = div.step, best_pdiv = div.pdiv;
+  peripheral_hz_ = peripheral_hz;
+  mode_ = config.mode;
 
   // 1. USIC2 takten und aus dem Reset holen
   reg(SCU_CLK_CGATCLR1) = SCU_USIC2;
@@ -106,7 +128,7 @@ bool SpiHw::init(std::uint32_t peripheral_hz, const Config &config) noexcept {
   xmc::port::set_pin_mode(xmc::port::P3, 8, xmc::port::output_alt(1));
   xmc::port::set_pin_mode(xmc::port::P3, 9, xmc::port::output_alt(1));
 
-  frequency_ = std::uint32_t(best_actual);
+  frequency_ = div.actual;
   return true;
 }
 

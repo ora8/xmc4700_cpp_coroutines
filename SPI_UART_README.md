@@ -51,6 +51,43 @@ tft.draw_text(x, y, "Text", fg, bg, scale);   // font 6x10, scale 1..4, opaque
   The drawing logic was verified on the PC against a simulated display. **Not yet tested
   with a real panel.**
 
+## XPT2046 touch (`include/xpt2046.hpp`, `src/xpt2046.cpp`)
+
+Resistive touch controller found on most ILI9341 SPI modules with touch (pins T_CLK, T_CS,
+T_DIN, T_DO, T_IRQ). It shares the SPI bus with the display:
+
+| Module | Relax Kit | Note |
+|--------|-----------|------|
+| T_CLK  | D13 (P3.9)  | same as display SCK |
+| T_DIN  | D11 (P3.8)  | same as display SDI/MOSI |
+| T_DO   | D12 (P3.7)  | MISO |
+| T_CS   | D4  (P1.8)  | own chip select |
+| T_IRQ  | D3  (P1.1)  | low while touched (internal pull-up) |
+
+Leave the display's **SDO/MISO unconnected**: on some modules the ILI9341 does not release
+MISO and corrupts the touch readings.
+
+```cpp
+Xpt2046 touch{spi, touch_cs, &touch_irq};   // irq may be nullptr (then pressure polling)
+touch.init();
+Xpt2046::Point p;
+if (touch.touched() && touch.read(p, TFT_ROTATION)) { /* p.x, p.y in screen coords */ }
+```
+
+- The XPT2046 allows at most ~2 MHz. Each measurement switches the bus to 2 MHz via
+  `SpiHw::set_frequency()` and back to the display clock afterwards.
+- Filtering: first sample discarded, 5 samples sorted, the middle three averaged; pressure
+  is checked before and after the X/Y measurement (threshold `set_threshold()`, default 300).
+- **Calibration:** `touch_task` in `main.cpp` prints the raw values on every touch over the
+  UART. Touch the four corners, then set `Calibration{x_min, x_max, y_min, y_max, swap_xy}`
+  for portrait orientation (rotation 0) with `touch.set_calibration(...)`. `x_min > x_max`
+  mirrors an axis; `swap_xy` swaps the raw axes. The driver converts to the display rotation.
+- `main.cpp` (`touch_task`, every 20 ms) draws a white dot at the touch point and shows
+  the coordinates at the bottom of the screen.
+- Tested: `set_frequency` 20 MHz -> 2 MHz -> 20 MHz in the loopback test (`spi_loopback`);
+  firmware runs on the board without touch hardware (no false touches). Bit extraction and
+  mapping for all 4 rotations verified on the PC. **Not yet tested with a real panel.**
+
 ## UART + BME280
 
 - `src/uart_hw.cpp` (`UartHw`): hardware UART on USIC0 channel 0, 115200 baud, 8N1. TX = P1.5, RX = P1.4, wired on the Relax Kit to the on-board J-Link virtual COM port: no adapter needed, open `/dev/ttyACM0` at 115200 8N1 (e.g. `picocom -b 115200 /dev/ttyACM0`).

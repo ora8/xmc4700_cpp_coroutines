@@ -6,6 +6,7 @@
 #include "ili9341.hpp"
 #include "spi_hw.hpp"
 #include "uart_hw.hpp"
+#include "xpt2046.hpp"
 #include "xmc_regs.hpp"
 #include <cstdint>
 #include <initializer_list>
@@ -25,6 +26,12 @@ GpioOutput tft_cs{xmc::port::P3, 10};
 GpioOutput tft_dc{xmc::port::P1, 11};
 GpioOutput tft_rst{xmc::port::P1, 10};
 Ili9341 tft{spi, tft_cs, tft_dc, &tft_rst};
+constexpr std::uint8_t TFT_ROTATION = 1; // Querformat 320 x 240
+
+// Touch-Controller XPT2046 am selben SPI-Bus: T_CS D4 (P1.8), T_IRQ D3 (P1.1)
+GpioOutput touch_cs{xmc::port::P1, 8};
+GpioInput touch_irq{xmc::port::P1, 1};
+Xpt2046 touch{spi, touch_cs, &touch_irq};
 
 // Mit J-Link/GDB beobachtbar. Bei fehlendem Sensor bleibt bme_ok=false.
 volatile bool bme_ok = false;
@@ -173,6 +180,45 @@ void display_start_screen() noexcept {
   uart.print(" ms\n");
 }
 
+// Touch: alle 20 ms abfragen, Punkt malen, Koordinaten unten anzeigen.
+// Pro Berührung einmal die Rohwerte über UART (zum Kalibrieren, siehe README).
+Task touch_task() {
+  bool was_touched = false;
+  char line[40];
+  for (;;) {
+    Xpt2046::Raw raw;
+    if (touch.touched() && touch.read_raw(raw)) {
+      const auto p = touch.map(raw, TFT_ROTATION);
+      tft.fill_rect(std::int16_t(p.x - 2), std::int16_t(p.y - 2), 5, 5, Ili9341::WHITE);
+      char *q = line;
+      for (const char *t = "Touch x="; *t;) *q++ = *t++;
+      q = format_fixed(q, float(p.x), 0);
+      for (const char *t = " y="; *t;) *q++ = *t++;
+      q = format_fixed(q, float(p.y), 0);
+      for (const char *t = "    "; *t;) *q++ = *t++;
+      *q = '\0';
+      tft.draw_text(10, 226, line, Ili9341::GREEN, Ili9341::BLACK, 1);
+      if (!was_touched) {
+        uart.print("Touch roh x=");
+        uart.print_int(raw.x);
+        uart.print(" y=");
+        uart.print_int(raw.y);
+        uart.print(" z=");
+        uart.print_int(raw.z);
+        uart.print(" -> Bildschirm ");
+        uart.print_int(p.x);
+        uart.print(",");
+        uart.print_int(p.y);
+        uart.print("\n");
+      }
+      was_touched = true;
+    } else {
+      was_touched = false;
+    }
+    co_await Executor::sleep_for(20);
+  }
+}
+
 Task heartbeat_task() {
   for (;;) {
     co_await Executor::sleep_for(5000);
@@ -225,13 +271,15 @@ int main() {
   SpiHw::Config spi_cfg;
   spi_cfg.frequency = 20'000'000;
   spi.init(CPU_HZ, spi_cfg);
-  tft.init(1); // Querformat 320 x 240
+  tft.init(TFT_ROTATION);
   display_start_screen();
+  touch.init();
 
   spawn(blink_task(), "blink");
   spawn(bme280_task(), "bme280");
   spawn(heartbeat_task(), "heartbeat");
   spawn(display_task(), "display");
+  spawn(touch_task(), "touch");
 
   executor.run();
 }

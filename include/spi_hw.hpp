@@ -42,6 +42,10 @@ public:
   /// Tatsächlich eingestellter Takt in Hz
   std::uint32_t frequency() const noexcept { return frequency_; }
 
+  /// Takt zur Laufzeit ändern (z. B. Display 20 MHz, Touch-Controller 2 MHz am selben
+  /// Bus). Nur zwischen Übertragungen aufrufen. `false`, wenn nicht erreichbar.
+  bool set_frequency(std::uint32_t frequency) noexcept;
+
   /// Vollduplex: `n` Bytes senden und empfangen. `tx == nullptr` sendet 0x00,
   /// `rx == nullptr` verwirft die Empfangsdaten. Kehrt zurück, wenn alles gesendet ist.
   void transfer(const std::uint8_t *tx, std::uint8_t *rx, std::size_t n) noexcept;
@@ -61,4 +65,6 @@ public:
 
 private:
   std::uint32_t frequency_ = 0;
+  std::uint32_t peripheral_hz_ = 0;
+  Mode mode_ = Mode::Mode0;
 };
