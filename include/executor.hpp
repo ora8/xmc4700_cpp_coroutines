@@ -6,6 +6,9 @@
 
 extern "C" void SysTick_Handler();
 std::uint32_t millis() noexcept;
+/// Blockierend warten (SysTick muss laufen). Nur außerhalb von Tasks oder für sehr kurze
+/// Zeiten verwenden; in Tasks `co_await Executor::sleep_for(ms)`.
+void delay_ms(std::uint32_t ms) noexcept;
 
 class Executor {
 public:

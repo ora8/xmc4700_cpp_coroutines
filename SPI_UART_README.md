@@ -28,6 +28,29 @@ spi.write(data, len);         // also: read(), transfer(tx, rx, n), transfer(byt
   `build/spi_loopback.elf`. Verified on the board: modes 0..3 at 1/10/20/40 MHz OK,
   2461 KiB/s at 20 MHz (bus without gaps).
 
+## ILI9341 display (`include/ili9341.hpp`, `src/ili9341.cpp`)
+
+Driver for ILI9341 modules (240 x 320, RGB565) on top of `SpiHw`. Wiring: VCC/LED -> 3V3,
+GND, SCK D13 (P3.9), SDI/MOSI D11 (P3.8), CS D10 (P3.10), DC D9 (P1.11), RESET D8 (P1.10).
+
+```cpp
+Ili9341 tft{spi, cs, dc, &rst};   // GpioOutput for CS, DC, RESET (RESET may be nullptr)
+tft.init(1);                      // rotation 0..3, 1 = landscape 320 x 240; blocks ~300 ms
+tft.fill_screen(Ili9341::BLACK);
+tft.fill_rect(x, y, w, h, color);  tft.draw_rect(...);  tft.draw_line(...);
+tft.draw_text(x, y, "Text", fg, bg, scale);   // font 6x10, scale 1..4, opaque
+```
+
+- Colors are RGB565 (`Ili9341::rgb(r, g, b)`, constants `RED`, `GREEN`, ...). If red and blue
+  appear swapped on your module, call `tft.set_bgr(false)`.
+- Font: `include/font_6x10.hpp`, generated from the X11 font "6x10" (public domain) via the
+  embedded-graphics bitmap.
+- `main.cpp` shows a start screen and, every second, the BME280 values and the uptime
+  (`display_task`). Without a display connected it runs harmlessly into the void.
+- Tested: on the board the SPI traffic runs (full screen clear 61 ms at 20 MHz = gap-free).
+  The drawing logic was verified on the PC against a simulated display. **Not yet tested
+  with a real panel.**
+
 ## UART + BME280
 
 - `src/uart_hw.cpp` (`UartHw`): hardware UART on USIC0 channel 0, 115200 baud, 8N1. TX = P1.5, RX = P1.4, wired on the Relax Kit to the on-board J-Link virtual COM port: no adapter needed, open `/dev/ttyACM0` at 115200 8N1 (e.g. `picocom -b 115200 /dev/ttyACM0`).

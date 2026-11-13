@@ -10,6 +10,15 @@ extern "C" void SysTick_Handler() { tick_ms = tick_ms + 1; }
 
 std::uint32_t millis() noexcept { return tick_ms; }
 
+void delay_ms(std::uint32_t ms) noexcept {
+  const std::uint32_t start = millis();
+  while (millis() - start < ms) {
+#if defined(__arm__) || defined(__thumb__)
+    __asm volatile("wfi"); // SysTick weckt jede Millisekunde
+#endif
+  }
+}
+
 bool Executor::spawn(Task &&task) noexcept {
   if (!task)
     return false;
