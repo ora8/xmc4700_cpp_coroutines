@@ -6,7 +6,9 @@
 // Externe Funktionen
 // ------------------------------------------------------------
 
-extern "C" int main();
+// main() darf in C++ nicht aufgerufen werden (auch -Wpedantic meldet das). Gleiches
+// Symbol "main" unter anderem Namen deklarieren und darüber starten.
+extern "C" int app_main() __asm__("main");
 
 namespace {
 
@@ -155,9 +157,14 @@ extern std::uint32_t _sbss;
 extern std::uint32_t _ebss;
 }
 
-// C++-Initialisierung aus der C++-Runtime (ruft die Konstruktoren aus
-// .init_array)
-extern "C" void __libc_init_array();
+// Konstruktoren globaler C++-Objekte: Tabellen aus dem Linker-Skript. Selbst aufrufen
+// statt __libc_init_array(): Das bräuchte _init() aus den Newlib-Startdateien, die wegen
+// -nostartfiles fehlen (sonst zieht crt0.o exit() und stdio-Platzhalter mit).
+using InitFunc = void (*)();
+extern "C" {
+extern InitFunc __preinit_array_start[], __preinit_array_end[];
+extern InitFunc __init_array_start[], __init_array_end[];
+}
 
 // ------------------------------------------------------------
 // Interrupt-Handler
@@ -224,10 +231,11 @@ extern "C" void Reset_Handler() {
   }
 
   // 4. Globale C++-Objekte initialisieren
-  __libc_init_array();
+  for (auto *f = __preinit_array_start; f < __preinit_array_end; ++f) (*f)();
+  for (auto *f = __init_array_start; f < __init_array_end; ++f) (*f)();
 
   // 5. Hauptprogramm starten
-  main();
+  app_main();
 
   // 6. Falls main() zurückkehrt
   for (;;) {

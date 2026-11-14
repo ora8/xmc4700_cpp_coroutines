@@ -46,6 +46,8 @@ target_compile_options(lvgl PRIVATE ${MCU_FLAGS} -ffunction-sections -fdata-sect
 function(xmc_firmware name)
     add_executable(${name} ${ARGN} ${COMMON_SOURCES})
     set_target_properties(${name} PROPERTIES SUFFIX ".elf")
+    # Bei Änderungen am Linker-Skript neu linken
+    set_target_properties(${name} PROPERTIES LINK_DEPENDS ${CMAKE_SOURCE_DIR}/linker/xmc4700.ld)
     target_include_directories(${name} PRIVATE include)
     target_compile_definitions(${name} PRIVATE CPU_HZ=${CPU_HZ})
     target_compile_options(${name} PRIVATE
@@ -63,6 +65,9 @@ function(xmc_firmware name)
         -T${CMAKE_SOURCE_DIR}/linker/xmc4700.ld
         --specs=nano.specs
         --specs=nosys.specs
+        # Start übernimmt src/startup.cpp: ohne crt0.o der Newlib, die sonst exit() und
+        # stdio (_close, _read, ...) mitzieht und .init_array-Einträge ins Flash legt
+        -nostartfiles
         -Wl,--gc-sections
         -Wl,-Map=${CMAKE_BINARY_DIR}/${name}.map
     )
